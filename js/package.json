@@ -1,0 +1,81 @@
+{
+  "name": "ds-crdt-interop",
+  "version": "0.0.1",
+  "main": "dist/lib/index.js",
+  "license": "MIT",
+  "type": "module",
+  "author": "dozyio",
+  "types": "./dist/src/index.d.ts",
+  "files": [
+    "src",
+    "dist",
+    "!dist/test",
+    "!**/*.tsbuildinfo",
+    ".gitignore",
+    ".prettierignore"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "eslintConfig": {
+    "extends": "ipfs",
+    "parserOptions": {
+      "project": true,
+      "sourceType": "module"
+    }
+  },
+  "aegir": {
+    "tsRepo": true,
+    "build": {
+      "config": {
+        "platform": "node"
+      }
+    }
+  },
+  "scripts": {
+    "dev": "nodemon --watch src --ext ts --exec 'node --loader ts-node/esm --experimental-specifier-resolution=node' src/index.ts",
+    "build": "aegir build",
+    "test": "vitest run --hideSkippedTests --allowOnly",
+    "test:bench": "vitest bench",
+    "test:watch": "vitest",
+    "start": "node dist/src/example/index.js",
+    "clean": "aegir clean",
+    "generate": "protons ./src/pb/*.proto",
+    "lint": "aegir lint",
+    "format": "yarn format:write",
+    "format:write": "yarn prettier --write --log-level warn .",
+    "format:check": "yarn prettier --list-different .",
+    "release": "aegir release",
+    "release:rc": "aegir release-rc"
+  },
+  "dependencies": {
+    "@chainsafe/libp2p-gossipsub": "^13.2.0",
+    "@chainsafe/libp2p-noise": "^15.1.1",
+    "@chainsafe/libp2p-yamux": "^6.0.2",
+    "@libp2p/identify": "^2.1.5",
+    "@libp2p/interface": "^1.7.0",
+    "@libp2p/logger": "^4.0.20",
+    "@libp2p/tcp": "^9.1.5",
+    "blockstore-core": "^5.0.0",
+    "datastore-core": "^10.0.0",
+    "fastify": "^4.28.1",
+    "helia": "^4.2.5",
+    "interface-datastore": "^8.3.0",
+    "js-ds-crdt": "^0.0.7",
+    "libp2p": "^1.9.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "aegir": "^44.1.1",
+    "esbuild": "^0.23.1",
+    "esbuild-runner": "^2.2.2",
+    "eslint-plugin-n": "^17.10.2",
+    "nodemon": "^3.1.4",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}
