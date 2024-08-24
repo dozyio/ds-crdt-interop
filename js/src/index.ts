@@ -1,12 +1,23 @@
+#!/bin/env node
+
+// import debug from 'weald'
+import { gossipsub } from '@chainsafe/libp2p-gossipsub'
+import { noise } from '@chainsafe/libp2p-noise'
+import { yamux } from '@chainsafe/libp2p-yamux'
+import { identify } from '@libp2p/identify'
+import { prefixLogger } from '@libp2p/logger'
 import { peerIdFromKeys } from '@libp2p/peer-id'
+import { tcp } from '@libp2p/tcp'
 import { MemoryBlockstore } from 'blockstore-core'
 import { MemoryDatastore } from 'datastore-core'
 import Fastify from 'fastify'
-import { Key } from 'interface-datastore'
-import debug from 'weald'
+import { createHelia, type HeliaLibp2p } from 'helia'
+import { type Blockstore } from 'interface-blockstore'
+import { Key, type Datastore } from 'interface-datastore'
+import { CRDTDatastore, msgIdFnStrictNoSign, PubSubBroadcaster, defaultOptions, type CRDTLibp2pServices, type Options } from 'js-ds-crdt'
+import { createLibp2p } from 'libp2p'
 import config from './config.json' with { type: 'json' }
-import { base64ToUint8Array, hexToUint8Array, newCRDTDatastore, uint8ArrayToBase64 } from './utils'
-import type { CRDTDatastore } from 'js-ds-crdt'
+import type { Libp2p, PeerId } from '@libp2p/interface'
 
 const postKVOpts = {
   schema: {
@@ -26,6 +37,93 @@ interface KVRequestBody {
   value: string
 }
 
+async function newCRDTDatastore (peerId: PeerId, port: number | string, topic: string = 'test', datastore: Datastore, blockstore: Blockstore, options?: Partial<Options>): Promise<CRDTDatastore> {
+  const store = datastore // new MemoryDatastore()
+  const namespace = new Key('/test')
+  const dagService = await createNode(peerId, port, datastore, blockstore)
+  const broadcaster = new PubSubBroadcaster(dagService.libp2p, topic, prefixLogger('crdt').forComponent('pubsub'))
+
+  let opts
+  if (options !== undefined) {
+    opts = { ...defaultOptions(), ...options }
+  }
+
+  return new CRDTDatastore(store, namespace, dagService, broadcaster, opts)
+}
+
+async function createNode (peerId: PeerId, port: number | string, datastore: Datastore, blockstore: Blockstore): Promise<HeliaLibp2p<Libp2p<CRDTLibp2pServices>>> {
+  const libp2p = await createLibp2p({
+    peerId,
+    addresses: {
+      listen: [
+        '/ip4/127.0.0.1/tcp/' + port
+      ]
+    },
+    transports: [
+      tcp()
+    ],
+    connectionEncryption: [
+      noise()
+    ],
+    streamMuxers: [
+      yamux()
+    ],
+    services: {
+      identify: identify(),
+      pubsub: gossipsub({
+        emitSelf: false,
+        allowPublishToZeroTopicPeers: true,
+        msgIdFn: msgIdFnStrictNoSign,
+        ignoreDuplicatePublishError: true,
+        tagMeshPeers: true
+      })
+    }
+  })
+
+  const h = await createHelia({
+    datastore,
+    blockstore,
+    libp2p
+  })
+
+  return h
+}
+
+function hexToUint8Array (hexString: string): Uint8Array {
+  if (hexString.length % 2 !== 0) {
+    throw new Error('Invalid hex string')
+  }
+
+  const arrayBuffer = new Uint8Array(hexString.length / 2)
+
+  for (let i = 0; i < hexString.length; i += 2) {
+    const byteValue = parseInt(hexString.slice(i, i + 2), 16)
+    arrayBuffer[i / 2] = byteValue
+  }
+
+  return arrayBuffer
+}
+
+function base64ToUint8Array (base64: string): Uint8Array {
+  const binaryString = atob(base64)
+  const length = binaryString.length
+  const bytes = new Uint8Array(length)
+
+  for (let i = 0; i < length; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+
+  return bytes
+}
+
+function uint8ArrayToBase64 (uint8Array: Uint8Array): string {
+  let binaryString = ''
+  for (let i = 0; i < uint8Array.length; i++) {
+    binaryString += String.fromCharCode(uint8Array[i])
+  }
+  return btoa(binaryString)
+}
+
 async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort: number): Promise<void> {
   const fastify = Fastify({
     logger: false
@@ -37,13 +135,19 @@ async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort
     try {
       const value = await datastore.get(new Key(key))
 
-      if (value === undefined || value === null) {
-        throw new Error('Key not found')
+      if (value === null) {
+        await reply.status(404).send({ error: 'not found' })
+        return
       }
+
+      if (value === undefined) {
+        throw new Error('unknown error')
+      }
+
       return { value: uint8ArrayToBase64(value) }
     } catch (err) {
       fastify.log.error(err)
-      await reply.status(500).send({ error: 'Failed to store data' })
+      await reply.status(500).send({ error: err })
     }
     return { success: true }
   })
@@ -77,37 +181,65 @@ async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort
   }
 }
 
-const peerId0 = await peerIdFromKeys(
-  hexToUint8Array(config.peers[0].public_key),
-  hexToUint8Array(config.peers[0].private_key)
-)
-const peerId1 = await peerIdFromKeys(
-  hexToUint8Array(config.peers[1].public_key),
-  hexToUint8Array(config.peers[1].private_key)
-)
+export default async function newTestServer (): Promise<void> {
+  let publicKey = config.peers[0].public_key
+  let privateKey = config.peers[0].private_key
+  //
+  if (process.env.PUBLIC_KEY !== null && process.env.PUBLIC_KEY !== undefined) {
+    publicKey = process.env.PUBLIC_KEY
+  }
+  if (process.env.PRIVATE_KEY !== null && process.env.PRIVATE_KEY !== undefined) {
+    privateKey = process.env.PRIVATE_KEY
+  }
 
-const libp2pPort = 6000
-const gossipSubTopic = 'test'
-const datastore0 = new MemoryDatastore()
-const blockstore0 = new MemoryBlockstore()
+  if (publicKey === null || publicKey === undefined || publicKey === '') {
+    throw new Error('PUBLIC_KEY must be set')
+  }
 
-const datastore1 = new MemoryDatastore()
-const blockstore1 = new MemoryBlockstore()
+  if (privateKey === null || privateKey === undefined || privateKey === '') {
+    throw new Error('PRIVATE_KEY must be set')
+  }
 
-const crdtDatastore0 = await newCRDTDatastore(peerId0, libp2pPort, gossipSubTopic, datastore0, blockstore0)
+  const peerId = await peerIdFromKeys(
+    hexToUint8Array(publicKey),
+    hexToUint8Array(privateKey)
+  )
 
-const crdtDatastore1 = await newCRDTDatastore(peerId1, libp2pPort + 1, gossipSubTopic, datastore1, blockstore1)
-const httpHost = '127.0.0.1'
-const httpPort = 3000
+  let libp2pPort: number | string = 6000
+  if (process.env.LIBP2P_PORT !== null && process.env.LIBP2P_PORT !== undefined) {
+    libp2pPort = process.env.LIBP2P_PORT
+  }
 
-debug.enable('crdt*')
-// 'crdt*,*crdt:trace')
-try {
-  await crdtDatastore0.dagService.libp2p.dial(crdtDatastore1.dagService.libp2p.getMultiaddrs()[0])
-} catch (err) {
-  // eslint-disable-next-line no-console
-  console.error(err)
-  process.exit(1)
+  let gossipSubTopic = 'test'
+  if (process.env.GOSSIP_SUB_TOPIC !== null && process.env.GOSSIP_SUB_TOPIC !== undefined) {
+    gossipSubTopic = process.env.GOSSIP_SUB_TOPIC
+  }
+
+  let httpHost = '127.0.0.1'
+  if (process.env.HTTP_HOST !== null && process.env.HTTP_HOST !== undefined) {
+    httpHost = process.env.HTTP_HOST
+  }
+
+  let httpPort = 3000
+  if (process.env.HTTP_PORT !== null && process.env.HTTP_PORT !== undefined) {
+    httpPort = parseInt(process.env.HTTP_PORT)
+  }
+
+  const datastore = new MemoryDatastore()
+  const blockstore = new MemoryBlockstore()
+
+  const crdtDatastore = await newCRDTDatastore(peerId, libp2pPort, gossipSubTopic, datastore, blockstore, { loggerPrefix: 'crdt' })
+
+  // debug.enable('crdt*')
+  // try {
+  //   await crdtDatastore0.dagService.libp2p.dial(crdtDatastore1.dagService.libp2p.getMultiaddrs()[0])
+  // } catch (err) {
+  //   // eslint-disable-next-line no-console
+  //   console.error(err)
+  //   process.exit(1)
+  // }
+
+  await startServer(crdtDatastore, httpHost, httpPort)
 }
 
-await startServer(crdtDatastore0, httpHost, httpPort)
+await newTestServer()
