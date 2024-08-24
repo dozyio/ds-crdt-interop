@@ -8,6 +8,7 @@ import { identify } from '@libp2p/identify'
 import { prefixLogger } from '@libp2p/logger'
 import { peerIdFromKeys } from '@libp2p/peer-id'
 import { tcp } from '@libp2p/tcp'
+import { multiaddr } from '@multiformats/multiaddr'
 import { MemoryBlockstore } from 'blockstore-core'
 import { MemoryDatastore } from 'datastore-core'
 import Fastify from 'fastify'
@@ -32,9 +33,25 @@ const postKVOpts = {
   }
 }
 
+const postConnectOpts = {
+  schema: {
+    body: {
+      type: 'object',
+      required: ['ma'],
+      properties: {
+        ma: { type: 'string' }
+      }
+    }
+  }
+}
+
 interface KVRequestBody {
   key: string
   value: string
+}
+
+interface ConnectRequestBody {
+  ma: string
 }
 
 async function newCRDTDatastore (peerId: PeerId, port: number | string, topic: string = 'test', datastore: Datastore, blockstore: Blockstore, options?: Partial<Options>): Promise<CRDTDatastore> {
@@ -129,6 +146,10 @@ async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort
     logger: false
   })
 
+  fastify.get('/dag', async (request, reply) => {
+    await datastore.printDAG()
+  })
+
   fastify.get('/*', async (request, reply) => {
     const { '*': key } = request.params as { '*': string }
 
@@ -165,6 +186,18 @@ async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort
     }
   })
 
+  fastify.post<{ Body: ConnectRequestBody }>('/connect', postConnectOpts, async (request, reply) => {
+    const { ma } = request.body
+    try {
+      const addr = multiaddr(ma)
+      await datastore.dagService.libp2p.dial(addr)
+      return { success: true }
+    } catch (err) {
+      fastify.log.error(err)
+      await reply.status(500).send({ error: 'Failed to connect' })
+    }
+  })
+
   try {
     const multiaddrs = datastore.dagService.libp2p.getMultiaddrs()
 
@@ -184,7 +217,7 @@ async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort
 export default async function newTestServer (): Promise<void> {
   let publicKey = config.peers[0].public_key
   let privateKey = config.peers[0].private_key
-  //
+
   if (process.env.PUBLIC_KEY !== null && process.env.PUBLIC_KEY !== undefined) {
     publicKey = process.env.PUBLIC_KEY
   }
@@ -210,7 +243,7 @@ export default async function newTestServer (): Promise<void> {
     libp2pPort = process.env.LIBP2P_PORT
   }
 
-  let gossipSubTopic = 'test'
+  let gossipSubTopic = 'crdt-interop'
   if (process.env.GOSSIP_SUB_TOPIC !== null && process.env.GOSSIP_SUB_TOPIC !== undefined) {
     gossipSubTopic = process.env.GOSSIP_SUB_TOPIC
   }
