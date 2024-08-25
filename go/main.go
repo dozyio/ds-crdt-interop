@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -28,6 +31,10 @@ type P2PNode struct {
 	PubsubCancel context.CancelFunc
 }
 
+type ValueResponse struct {
+	Value string `json:"value"`
+}
+
 var (
 	logger = logging.Logger("crdt-interop")
 )
@@ -35,7 +42,7 @@ var (
 func AddressesWithPeerID(h host.Host) string {
 	addresses := ""
 	for _, addr := range h.Addrs() {
-		addresses += "'" + addr.String() + "/p2p/" + h.ID().String() + "',\n"
+		addresses += addr.String() + "/p2p/" + h.ID().String() + "\n"
 	}
 
 	return addresses
@@ -74,7 +81,7 @@ func createNode(privateKey crypto.PrivKey, port, topic string, datastore ds.Batc
 	ctx, cancel := context.WithCancel(context.Background())
 	p2pNode.Cancel = cancel
 
-	listen, err := multiaddr.NewMultiaddr("/ip4/127.0.0.1/tcp/" + port)
+	listen, err := multiaddr.NewMultiaddr("/ip4/0.0.0.0/tcp/" + port)
 	if err != nil {
 		panic(err)
 	}
@@ -97,28 +104,6 @@ func createNode(privateKey crypto.PrivKey, port, topic string, datastore ds.Batc
 	if err != nil {
 		logger.Fatal(err)
 	}
-	//
-	// pubsubTopic, err := psub.Join(topic)
-	// if err != nil {
-	// 	logger.Fatal(err)
-	// }
-	//
-	// subscription, err := pubsubTopic.Subscribe()
-	// if err != nil {
-	// 	logger.Fatal(err)
-	// }
-	//
-	// go func() {
-	// 	for {
-	// 		msg, err2 := subscription.Next(ctx)
-	// 		if err2 != nil {
-	// 			fmt.Println(err2)
-	// 			break
-	// 		}
-	//
-	// 		h.ConnManager().TagPeer(msg.ReceivedFrom, "keep", 100)
-	// 	}
-	// }()
 
 	ipfs, err := ipfslite.New(ctx, datastore, nil, h, dht, nil)
 	if err != nil {
@@ -154,9 +139,52 @@ func main() {
 		panic(err)
 	}
 
-	_, p2pNode := newCRDTDatastore(privateKey, "4000", "crdt-interop", ds.NewMapDatastore(), ds.NewKey("/crdt-interop"))
+	crdtDatastore, p2pNode := newCRDTDatastore(privateKey, "4000", "crdt-interop", ds.NewMapDatastore(), ds.NewKey("/crdt-interop"))
 
 	fmt.Printf("Libp2p running on %s\n", AddressesWithPeerID(p2pNode.H))
+
+	router := http.NewServeMux()
+
+	router.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "OK")
+	})
+
+	router.HandleFunc("POST /{rest...}", func(w http.ResponseWriter, r *http.Request) {
+		rest := r.PathValue("rest")
+		fmt.Printf("Putting: %s\n", rest)
+	})
+
+	router.HandleFunc("GET /{rest...}", func(w http.ResponseWriter, r *http.Request) {
+		rest := r.PathValue("rest")
+
+		value, err := crdtDatastore.Get(r.Context(), ds.NewKey(rest))
+		if err != nil {
+			logger.Error(err)
+			http.Error(w, err.Error(), http.StatusNotFound)
+
+			return
+		}
+
+		valRes := &ValueResponse{Value: base64.StdEncoding.EncodeToString(value)}
+
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+
+		err = json.NewEncoder(w).Encode(valRes)
+		if err != nil {
+			logger.Error(err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+
+			return
+		}
+	})
+
+	// router.HandleFunc("DELETE /todos/{id}", func(w http.ResponseWriter, r *http.Request) {
+	// 	id := r.PathValue("id")
+	// 	fmt.Println("delete a todo by id", id)
+	// })
+
+	http.ListenAndServe(":8000", router)
 
 	// http interface to add/delete keys / dag export
 	sigChan := make(chan os.Signal, 1)

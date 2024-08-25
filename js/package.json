@@ -40,7 +40,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "pkgroll --clean-dist",
-    "start": "yarn build && tsx dist/index.mjs",
+    "start": "tsx dist/index.mjs",
     "test": "vitest run --hideSkippedTests --allowOnly",
     "test:bench": "vitest bench",
     "test:watch": "vitest",

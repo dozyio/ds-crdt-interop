@@ -24,9 +24,8 @@ const postKVOpts = {
   schema: {
     body: {
       type: 'object',
-      required: ['key', 'value'],
+      required: ['value'],
       properties: {
-        key: { type: 'string' },
         value: { type: 'string' } // value is a base64 encoded string
       }
     }
@@ -46,7 +45,6 @@ const postConnectOpts = {
 }
 
 interface KVRequestBody {
-  key: string
   value: string
 }
 
@@ -55,7 +53,7 @@ interface ConnectRequestBody {
 }
 
 async function newCRDTDatastore (peerId: PeerId, port: number | string, topic: string = 'test', datastore: Datastore, blockstore: Blockstore, options?: Partial<Options>): Promise<CRDTDatastore> {
-  const store = datastore // new MemoryDatastore()
+  const store = datastore
   const namespace = new Key('/test')
   const dagService = await createNode(peerId, port, datastore, blockstore)
   const broadcaster = new PubSubBroadcaster(dagService.libp2p, topic, prefixLogger('crdt').forComponent('pubsub'))
@@ -69,11 +67,16 @@ async function newCRDTDatastore (peerId: PeerId, port: number | string, topic: s
 }
 
 async function createNode (peerId: PeerId, port: number | string, datastore: Datastore, blockstore: Blockstore): Promise<HeliaLibp2p<Libp2p<CRDTLibp2pServices>>> {
+  let libp2pHost = '127.0.0.1'
+  if (process.env.LIBP2P_HOST !== null && process.env.LIBP2P_HOST !== undefined) {
+    libp2pHost = process.env.LIBP2P_HOST
+  }
+
   const libp2p = await createLibp2p({
     peerId,
     addresses: {
       listen: [
-        '/ip4/127.0.0.1/tcp/' + port
+        `/ip4/${libp2pHost}/tcp/${port}`
       ]
     },
     transports: [
@@ -143,7 +146,11 @@ function uint8ArrayToBase64 (uint8Array: Uint8Array): string {
 
 async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort: number): Promise<void> {
   const fastify = Fastify({
-    logger: false
+    logger: true
+  })
+
+  fastify.get('/health', async (request, reply) => {
+    return 'ok'
   })
 
   fastify.get('/dag', async (request, reply) => {
@@ -173,19 +180,6 @@ async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort
     return { success: true }
   })
 
-  fastify.post<{ Body: KVRequestBody }>('/put', postKVOpts, async (request, reply) => {
-    const { key, value } = request.body
-    const datastoreValue = base64ToUint8Array(value)
-
-    try {
-      await datastore.put(new Key(key), datastoreValue)
-      return { success: true }
-    } catch (err) {
-      fastify.log.error(err)
-      await reply.status(500).send({ error: 'Failed to store data' })
-    }
-  })
-
   fastify.post<{ Body: ConnectRequestBody }>('/connect', postConnectOpts, async (request, reply) => {
     const { ma } = request.body
     try {
@@ -195,6 +189,20 @@ async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort
     } catch (err) {
       fastify.log.error(err)
       await reply.status(500).send({ error: 'Failed to connect' })
+    }
+  })
+
+  fastify.post<{ Body: KVRequestBody }>('/*', postKVOpts, async (request, reply) => {
+    const { value } = request.body
+    const { '*': key } = request.params as { '*': string }
+    const datastoreValue = base64ToUint8Array(value)
+
+    try {
+      await datastore.put(new Key(key), datastoreValue)
+      return { success: true }
+    } catch (err) {
+      fastify.log.error(err)
+      await reply.status(500).send({ error: 'Failed to store data' })
     }
   })
 
