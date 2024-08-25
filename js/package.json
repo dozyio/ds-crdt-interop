@@ -41,6 +41,8 @@
     "dev": "tsx src/index.ts",
     "build": "pkgroll --clean-dist",
     "start": "tsx dist/index.mjs",
+    "profile": "tsx --prof dist/index.mjs",
+    "inspect": "tsx --inspect dist/index.mjs",
     "test": "vitest run --hideSkippedTests --allowOnly",
     "test:bench": "vitest bench",
     "test:watch": "vitest",

@@ -1,6 +1,5 @@
 #!/bin/env node
 
-// import debug from 'weald'
 import { gossipsub } from '@chainsafe/libp2p-gossipsub'
 import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
@@ -17,8 +16,12 @@ import { type Blockstore } from 'interface-blockstore'
 import { Key, type Datastore } from 'interface-datastore'
 import { CRDTDatastore, msgIdFnStrictNoSign, PubSubBroadcaster, defaultOptions, type CRDTLibp2pServices, type Options } from 'js-ds-crdt'
 import { createLibp2p } from 'libp2p'
+// import debug from 'weald'
 import config from './config.json' with { type: 'json' }
 import type { Libp2p, PeerId } from '@libp2p/interface'
+
+// debug.enable('crdt*')
+// debug.enable('*')
 
 const postKVOpts = {
   schema: {
@@ -271,7 +274,6 @@ export default async function newTestServer (): Promise<void> {
 
   const crdtDatastore = await newCRDTDatastore(peerId, libp2pPort, gossipSubTopic, datastore, blockstore, { loggerPrefix: 'crdt' })
 
-  // debug.enable('crdt*')
   // try {
   //   await crdtDatastore0.dagService.libp2p.dial(crdtDatastore1.dagService.libp2p.getMultiaddrs()[0])
   // } catch (err) {

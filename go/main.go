@@ -156,6 +156,7 @@ func main() {
 
 	router.HandleFunc("GET /{rest...}", func(w http.ResponseWriter, r *http.Request) {
 		rest := r.PathValue("rest")
+		fmt.Printf("GET: %s\n", rest)
 
 		value, err := crdtDatastore.Get(r.Context(), ds.NewKey(rest))
 		if err != nil {
