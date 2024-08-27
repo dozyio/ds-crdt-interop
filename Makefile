@@ -10,3 +10,6 @@ build-go:
 
 test:
 	cd test && go test -v
+
+testsingle:
+	cd test && go test -v -failfast -run ${TEST}

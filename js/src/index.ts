@@ -1,8 +1,7 @@
-#!/bin/env node
-
 import { gossipsub } from '@chainsafe/libp2p-gossipsub'
 import { noise } from '@chainsafe/libp2p-noise'
 import { yamux } from '@chainsafe/libp2p-yamux'
+import { bitswap } from '@helia/block-brokers'
 import { identify } from '@libp2p/identify'
 import { prefixLogger } from '@libp2p/logger'
 import { peerIdFromKeys } from '@libp2p/peer-id'
@@ -16,12 +15,11 @@ import { type Blockstore } from 'interface-blockstore'
 import { Key, type Datastore } from 'interface-datastore'
 import { CRDTDatastore, msgIdFnStrictNoSign, PubSubBroadcaster, defaultOptions, type CRDTLibp2pServices, type Options } from 'js-ds-crdt'
 import { createLibp2p } from 'libp2p'
-// import debug from 'weald'
+import debug from 'weald'
 import config from './config.json' with { type: 'json' }
 import type { Libp2p, PeerId } from '@libp2p/interface'
 
 // debug.enable('crdt*')
-// debug.enable('*')
 
 const postKVOpts = {
   schema: {
@@ -57,13 +55,15 @@ interface ConnectRequestBody {
 
 async function newCRDTDatastore (peerId: PeerId, port: number | string, topic: string = 'test', datastore: Datastore, blockstore: Blockstore, options?: Partial<Options>): Promise<CRDTDatastore> {
   const store = datastore
-  const namespace = new Key('/test')
+  const namespace = new Key('/crdt-interop')
   const dagService = await createNode(peerId, port, datastore, blockstore)
   const broadcaster = new PubSubBroadcaster(dagService.libp2p, topic, prefixLogger('crdt').forComponent('pubsub'))
 
   let opts
   if (options !== undefined) {
     opts = { ...defaultOptions(), ...options }
+  } else {
+    opts = defaultOptions()
   }
 
   return new CRDTDatastore(store, namespace, dagService, broadcaster, opts)
@@ -91,6 +91,12 @@ async function createNode (peerId: PeerId, port: number | string, datastore: Dat
     streamMuxers: [
       yamux()
     ],
+    connectionManager: {
+      minConnections: 1
+    },
+    connectionMonitor: {
+      enabled: false
+    },
     services: {
       identify: identify(),
       pubsub: gossipsub({
@@ -103,10 +109,14 @@ async function createNode (peerId: PeerId, port: number | string, datastore: Dat
     }
   })
 
+  const blockBrokers = [bitswap()]
+
   const h = await createHelia({
     datastore,
     blockstore,
-    libp2p
+    libp2p,
+    blockBrokers,
+    dns: undefined
   })
 
   return h
@@ -147,9 +157,9 @@ function uint8ArrayToBase64 (uint8Array: Uint8Array): string {
   return btoa(binaryString)
 }
 
-async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort: number): Promise<void> {
+async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort: number, topic: string): Promise<void> {
   const fastify = Fastify({
-    logger: true
+    logger: false
   })
 
   fastify.get('/health', async (request, reply) => {
@@ -158,6 +168,10 @@ async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort
 
   fastify.get('/dag', async (request, reply) => {
     await datastore.printDAG()
+  })
+
+  fastify.get('/subscribers', async (request, reply) => {
+    return JSON.stringify(datastore.dagService.libp2p.services.pubsub.getSubscribers(topic))
   })
 
   fastify.get('/*', async (request, reply) => {
@@ -180,7 +194,19 @@ async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort
       fastify.log.error(err)
       await reply.status(500).send({ error: err })
     }
-    return { success: true }
+  })
+
+  fastify.delete('/*', async (request, reply) => {
+    const { '*': key } = request.params as { '*': string }
+
+    try {
+      await datastore.delete(new Key(key))
+
+      return { success: true }
+    } catch (err) {
+      fastify.log.error(err)
+      await reply.status(500).send({ error: err })
+    }
   })
 
   fastify.post<{ Body: ConnectRequestBody }>('/connect', postConnectOpts, async (request, reply) => {
@@ -274,15 +300,7 @@ export default async function newTestServer (): Promise<void> {
 
   const crdtDatastore = await newCRDTDatastore(peerId, libp2pPort, gossipSubTopic, datastore, blockstore, { loggerPrefix: 'crdt' })
 
-  // try {
-  //   await crdtDatastore0.dagService.libp2p.dial(crdtDatastore1.dagService.libp2p.getMultiaddrs()[0])
-  // } catch (err) {
-  //   // eslint-disable-next-line no-console
-  //   console.error(err)
-  //   process.exit(1)
-  // }
-
-  await startServer(crdtDatastore, httpHost, httpPort)
+  await startServer(crdtDatastore, httpHost, httpPort, gossipSubTopic)
 }
 
 await newTestServer()

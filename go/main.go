@@ -28,15 +28,25 @@ type P2PNode struct {
 	Broadcaster  *crdt.PubSubBroadcaster
 	DagSyncer    *ipfslite.Peer
 	Datastore    ds.Datastore
+	Pubsub       *pubsub.PubSub
 	PubsubCancel context.CancelFunc
+	Topic        string
+}
+
+type ValueRequest struct {
+	Value string `json:"value"`
 }
 
 type ValueResponse struct {
 	Value string `json:"value"`
 }
 
+type OkResponse struct {
+	Success bool `json:"success"`
+}
+
 var (
-	logger = logging.Logger("crdt-interop")
+	logger = logging.Logger("crdt")
 )
 
 func AddressesWithPeerID(h host.Host) string {
@@ -61,10 +71,10 @@ func newCRDTDatastore(
 	opts.Logger = logger
 	opts.RebroadcastInterval = 5 * time.Second
 	opts.PutHook = func(k ds.Key, v []byte) {
-		fmt.Printf("Added: [%s] -> %s\n", k, string(v))
+		fmt.Printf("Go Added: [%s] -> %s\n", k, string(v))
 	}
 	opts.DeleteHook = func(k ds.Key) {
-		fmt.Printf("Removed: [%s]\n", k)
+		fmt.Printf("Go Removed: [%s]\n", k)
 	}
 
 	crdtDatastore, err := crdt.New(n.Datastore, namespace, n.DagSyncer, n.Broadcaster, opts)
@@ -105,6 +115,9 @@ func createNode(privateKey crypto.PrivKey, port, topic string, datastore ds.Batc
 		logger.Fatal(err)
 	}
 
+	p2pNode.Pubsub = psub
+	p2pNode.Topic = topic
+
 	ipfs, err := ipfslite.New(ctx, datastore, nil, h, dht, nil)
 	if err != nil {
 		logger.Fatal(err)
@@ -143,49 +156,12 @@ func main() {
 
 	fmt.Printf("Libp2p running on %s\n", AddressesWithPeerID(p2pNode.H))
 
-	router := http.NewServeMux()
+	router := setupRouter(crdtDatastore, p2pNode)
 
-	router.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "OK")
-	})
-
-	router.HandleFunc("POST /{rest...}", func(w http.ResponseWriter, r *http.Request) {
-		rest := r.PathValue("rest")
-		fmt.Printf("Putting: %s\n", rest)
-	})
-
-	router.HandleFunc("GET /{rest...}", func(w http.ResponseWriter, r *http.Request) {
-		rest := r.PathValue("rest")
-		fmt.Printf("GET: %s\n", rest)
-
-		value, err := crdtDatastore.Get(r.Context(), ds.NewKey(rest))
-		if err != nil {
-			logger.Error(err)
-			http.Error(w, err.Error(), http.StatusNotFound)
-
-			return
-		}
-
-		valRes := &ValueResponse{Value: base64.StdEncoding.EncodeToString(value)}
-
-		w.WriteHeader(http.StatusOK)
-		w.Header().Set("Content-Type", "application/json")
-
-		err = json.NewEncoder(w).Encode(valRes)
-		if err != nil {
-			logger.Error(err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-
-			return
-		}
-	})
-
-	// router.HandleFunc("DELETE /todos/{id}", func(w http.ResponseWriter, r *http.Request) {
-	// 	id := r.PathValue("id")
-	// 	fmt.Println("delete a todo by id", id)
-	// })
-
-	http.ListenAndServe(":8000", router)
+	err = http.ListenAndServe(":8000", router)
+	if err != nil {
+		logger.Fatal(err)
+	}
 
 	// http interface to add/delete keys / dag export
 	sigChan := make(chan os.Signal, 1)
@@ -199,4 +175,115 @@ func main() {
 	<-sigChan
 
 	fmt.Println("Shutting down...")
+}
+
+// Refactor the router setup into its own function
+func setupRouter(crdtDatastore *crdt.Datastore, p2pNode *P2PNode) *http.ServeMux {
+	router := http.NewServeMux()
+
+	router.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "OK")
+	})
+
+	router.HandleFunc("GET /subscribers", func(w http.ResponseWriter, r *http.Request) {
+		peers := p2pNode.Pubsub.ListPeers(p2pNode.Topic)
+
+		var peerIDs []string
+		for _, p := range peers {
+			peerIDs = append(peerIDs, p.String())
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := json.NewEncoder(w).Encode(peerIDs); err != nil {
+			http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
+		}
+	})
+
+	router.HandleFunc("POST /{rest...}", func(w http.ResponseWriter, r *http.Request) {
+		rest := r.PathValue("rest")
+		handlePost(crdtDatastore, w, r, rest)
+	})
+
+	router.HandleFunc("GET /{rest...}", func(w http.ResponseWriter, r *http.Request) {
+		rest := r.PathValue("rest")
+		handleGet(crdtDatastore, w, r, rest)
+	})
+
+	router.HandleFunc("DELETE /{rest...}", func(w http.ResponseWriter, r *http.Request) {
+		rest := r.PathValue("rest")
+		handleDelete(crdtDatastore, w, r, rest)
+	})
+
+	return router
+}
+
+func handlePost(crdtDatastore *crdt.Datastore, w http.ResponseWriter, r *http.Request, key string) {
+	decoder := json.NewDecoder(r.Body)
+
+	var vr ValueRequest
+	if err := decoder.Decode(&vr); err != nil {
+		logger.Error(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+
+		return
+	}
+
+	value, err := base64.StdEncoding.DecodeString(vr.Value)
+	if err != nil {
+		logger.Error(err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+
+		return
+	}
+
+	if err = crdtDatastore.Put(r.Context(), ds.NewKey(key), value); err != nil {
+		logger.Error(err)
+		http.Error(w, err.Error(), http.StatusNotFound)
+
+		return
+	}
+
+	result := &OkResponse{Success: true}
+
+	w.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w).Encode(result)
+	if err != nil {
+		logger.Error(err)
+	}
+}
+
+func handleGet(crdtDatastore *crdt.Datastore, w http.ResponseWriter, r *http.Request, key string) {
+	value, err := crdtDatastore.Get(r.Context(), ds.NewKey(key))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+
+		return
+	}
+
+	result := &ValueResponse{Value: base64.StdEncoding.EncodeToString(value)}
+
+	w.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w).Encode(result)
+	if err != nil {
+		logger.Error(err)
+	}
+}
+
+func handleDelete(crdtDatastore *crdt.Datastore, w http.ResponseWriter, r *http.Request, key string) {
+	if err := crdtDatastore.Delete(r.Context(), ds.NewKey(key)); err != nil {
+		logger.Error(err)
+		http.Error(w, err.Error(), http.StatusNotFound)
+
+		return
+	}
+
+	result := &OkResponse{Success: true}
+
+	w.Header().Set("Content-Type", "application/json")
+	err := json.NewEncoder(w).Encode(result)
+	if err != nil {
+		logger.Error(err)
+	}
+
 }
