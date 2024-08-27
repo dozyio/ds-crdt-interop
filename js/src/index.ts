@@ -179,6 +179,7 @@ async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort
 
     try {
       const value = await datastore.get(new Key(key))
+      console.log('value', value)
 
       if (value === null) {
         await reply.status(404).send({ error: 'not found' })
@@ -298,7 +299,18 @@ export default async function newTestServer (): Promise<void> {
   const datastore = new MemoryDatastore()
   const blockstore = new MemoryBlockstore()
 
-  const crdtDatastore = await newCRDTDatastore(peerId, libp2pPort, gossipSubTopic, datastore, blockstore, { loggerPrefix: 'crdt' })
+  const opts: Partial<Options> = {
+    putHook: (key: string, value: Uint8Array) => {
+      // eslint-disable-next-line no-console
+      console.log(`JS Added: [${new Key(key).toString()}] -> ${new TextDecoder().decode(value)}`)
+    },
+    deleteHook: (key: string) => {
+      // eslint-disable-next-line no-console
+      console.log(`JS Removed: [${new Key(key).toString()}]`)
+    },
+    loggerPrefix: 'crdt'
+  }
+  const crdtDatastore = await newCRDTDatastore(peerId, libp2pPort, gossipSubTopic, datastore, blockstore, opts)
 
   await startServer(crdtDatastore, httpHost, httpPort, gossipSubTopic)
 }
