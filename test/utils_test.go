@@ -30,6 +30,8 @@ const (
 	goMappedHttpPort     = "8000/tcp"
 	goLibp2pPort         = "4000"
 	goMappedLibp2pPort   = "4000/tcp"
+	goPrivateKey         = "08011240be5d8bf7971c9a5b01892cf7ff5603f735a92a94623903787c15e994584eab9ce46ad62ac53a9db270ffbe03073be479f6ffc123270fc54c712a98022c8050bc" //nolint:lll // ignore
+	goPeerId             = "12D3KooWRC1cNip3xyDwzxrCryQ3V7bCsVF6Q3Nvh4o2CBSFpEmR"
 )
 
 type StdoutLogConsumer struct{}
@@ -44,7 +46,10 @@ func (lc *StdoutLogConsumer) Accept(l testcontainers.Log) {
 }
 
 // Setup function to initialize the environment
-func setupTestEnvironment(t *testing.T, withLogging bool) (nodeContainer, goContainer testcontainers.Container) { //nolint:ireturn // ignore
+func setupTestEnvironment( //nolint:ireturn // ignore
+	t *testing.T,
+	withLogging bool,
+) (nodeContainer, goContainer testcontainers.Container) {
 	ctx := context.Background()
 
 	// Create a new network
@@ -70,7 +75,11 @@ func setupTestEnvironment(t *testing.T, withLogging bool) (nodeContainer, goCont
 	return nodeContainer, goContainer
 }
 
-func startNodeContainer(ctx context.Context, networkName string, withLogging bool) (testcontainers.Container, error) { //nolint:ireturn // ignore
+func startNodeContainer( //nolint:ireturn // ignore
+	ctx context.Context,
+	networkName string,
+	withLogging bool,
+) (testcontainers.Container, error) {
 	env := map[string]string{
 		"TYPE":               "node",
 		"HTTP_PORT":          nodeHttpPort,
@@ -99,7 +108,11 @@ func startNodeContainer(ctx context.Context, networkName string, withLogging boo
 	)
 }
 
-func startGoContainer(ctx context.Context, networkName string, withLogging bool) (testcontainers.Container, error) {
+func startGoContainer( //nolint:ireturn // ignore
+	ctx context.Context,
+	networkName string,
+	withLogging bool,
+) (testcontainers.Container, error) {
 	return startContainer(
 		ctx,
 		networkName,
@@ -112,7 +125,7 @@ func startGoContainer(ctx context.Context, networkName string, withLogging bool)
 			"LIBP2P_HOST":        "0.0.0.0",
 			"LIBP2P_PORT":        goLibp2pPort,
 			"LIBP2P_PORT_MAPPED": goMappedLibp2pPort,
-			"PRIVATE_KEY":        "08011240be5d8bf7971c9a5b01892cf7ff5603f735a92a94623903787c15e994584eab9ce46ad62ac53a9db270ffbe03073be479f6ffc123270fc54c712a98022c8050bc",
+			"PRIVATE_KEY":        goPrivateKey,
 		},
 		[]string{
 			goMappedHttpPort,
@@ -123,8 +136,15 @@ func startGoContainer(ctx context.Context, networkName string, withLogging bool)
 	)
 }
 
-func startContainer(ctx context.Context, networkName, image string, envVars map[string]string, exposedPorts []string, healthPort string, withLogging bool) (testcontainers.Container, error) {
-
+func startContainer( //nolint:ireturn // ignore
+	ctx context.Context,
+	networkName string,
+	image string,
+	envVars map[string]string,
+	exposedPorts []string,
+	healthPort string,
+	withLogging bool,
+) (testcontainers.Container, error) {
 	req := testcontainers.ContainerRequest{
 		Image:        image,
 		ExposedPorts: exposedPorts,
@@ -288,7 +308,7 @@ func connectHosts(t *testing.T, nc, gc testcontainers.Container) {
 	}
 
 	doPost(t, url, map[string]string{
-		"ma": fmt.Sprintf("/ip4/%s/tcp/%s/p2p/12D3KooWRC1cNip3xyDwzxrCryQ3V7bCsVF6Q3Nvh4o2CBSFpEmR", goContainerIP, goLibp2pPort),
+		"ma": fmt.Sprintf("/ip4/%s/tcp/%s/p2p/%s", goContainerIP, goLibp2pPort, goPeerId),
 	})
 
 	nodeSubscribersUrl := baseUrl(nc) + "subscribers"
@@ -317,6 +337,10 @@ func validateKeyValue(t *testing.T, c testcontainers.Container, key, expectedVal
 	assert.NoError(t, err, "Failed to send HTTP request %s", err) //nolint:testifylint // runs in goroutine
 
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	assert.NoError(t, err, "Failed to read HTTP response body %s", err) //nolint:testifylint // runs in goroutine
