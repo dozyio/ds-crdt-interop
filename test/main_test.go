@@ -13,10 +13,11 @@ import (
 
 // Test for Node adding a single key
 func TestNodeAddSingleKey(t *testing.T) {
+	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
-	key := "test1"
-	value := "value1"
+	key := "testN"
+	value := "valueN"
 
 	putKey(t, nc, key, value)
 
@@ -28,10 +29,11 @@ func TestNodeAddSingleKey(t *testing.T) {
 
 // Test for Go adding a single key
 func TestGoAddSingleKey(t *testing.T) {
+	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
-	key := "test1"
-	value := "value1"
+	key := "testG"
+	value := "valueG"
 
 	putKey(t, gc, key, value)
 
@@ -43,39 +45,41 @@ func TestGoAddSingleKey(t *testing.T) {
 
 // Test for Node deleting a single key
 func TestNodeAddDeleteKey(t *testing.T) {
+	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
-	key := "test1"
-	value := "value1"
+	key := "testND"
+	value := "valueND"
 
 	putKey(t, nc, key, value)
 
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		assert.True(c, validateKeyValue(t, gc, key, value), "Key not found in Go container")
 		assert.True(c, validateKeyValue(t, nc, key, value), "Key not found in Node container")
-	}, 10*time.Second, 100*time.Millisecond, "Key not found in containers")
+		assert.True(c, validateKeyValue(t, gc, key, value), "Key not found in Go container")
+	}, 20*time.Second, 100*time.Millisecond, "Key not found in containers")
 
 	deleteKey(t, nc, key)
 
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		assert.True(c, validateNoKey(t, gc, key), "Key found in Go container")
 		assert.True(c, validateNoKey(t, nc, key), "Key found in Node container")
+		assert.True(c, validateNoKey(t, gc, key), "Key found in Go container")
 	}, 20*time.Second, 100*time.Millisecond, "Key not found in containers")
 }
 
 // Test for Go deleting a single key
 func TestGoAddDeleteKey(t *testing.T) {
-	nc, gc := setupTestEnvironment(t, true)
+	t.Parallel()
+	nc, gc := setupTestEnvironment(t, false)
 
-	key := "test1"
-	value := "value1"
+	key := "testNG"
+	value := "valueNG"
 
 	putKey(t, gc, key, value)
 
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		assert.True(c, validateKeyValue(t, gc, key, value), "Key not found in Go container")
 		assert.True(c, validateKeyValue(t, nc, key, value), "Key not found in Node container")
-	}, 10*time.Second, 100*time.Millisecond, "Key not found in containers")
+	}, 20*time.Second, 100*time.Millisecond, "Key not found in containers")
 
 	deleteKey(t, gc, key)
 
@@ -87,6 +91,7 @@ func TestGoAddDeleteKey(t *testing.T) {
 
 // Test for Node adding multiple keys
 func TestNodeAddMultipleKeys(t *testing.T) {
+	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	for i := 0; i < 100; i++ {
@@ -131,6 +136,7 @@ func TestNodeAddMultipleKeys(t *testing.T) {
 
 // Test for Go adding multiple keys
 func TestGoAddMultipleKeys(t *testing.T) {
+	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	numReq := 100
@@ -177,6 +183,7 @@ func TestGoAddMultipleKeys(t *testing.T) {
 
 // Test for conflict resolution
 func TestConflictResolution(t *testing.T) {
+	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	key := "conflictKey"
@@ -207,6 +214,7 @@ func TestConflictResolution(t *testing.T) {
 
 // Test for Node network partition
 func TestNodeNetworkPartition(t *testing.T) {
+	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	key := "partitionKey"
@@ -236,6 +244,7 @@ func TestNodeNetworkPartition(t *testing.T) {
 
 // Test for Go network partition
 func TestGoNetworkPartition(t *testing.T) {
+	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	key := "partitionKey"

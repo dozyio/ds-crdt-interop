@@ -14,6 +14,7 @@ import (
 
 	ipfslite "github.com/hsanjuan/ipfs-lite"
 	ds "github.com/ipfs/go-datastore"
+	badger "github.com/ipfs/go-ds-badger"
 	crdt "github.com/ipfs/go-ds-crdt"
 	logging "github.com/ipfs/go-log/v2"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
@@ -65,6 +66,8 @@ func newCRDTDatastore(
 	datastore ds.Batching,
 	namespace ds.Key,
 ) (*crdt.Datastore, *P2PNode) {
+	_ = logging.SetLogLevel("*", "debug")
+	_ = logging.SetLogLevel("p2p-config", "info")
 	n := createNode(privateKey, port, topic, datastore)
 
 	opts := crdt.DefaultOptions()
@@ -152,7 +155,22 @@ func main() {
 		panic(err)
 	}
 
-	crdtDatastore, p2pNode := newCRDTDatastore(privateKey, "4000", "crdt-interop", ds.NewMapDatastore(), ds.NewKey("/crdt-interop"))
+	// store := dssync.MutexWrap(ds.NewMapDatastore())
+
+	dir, err := os.MkdirTemp("", "globaldb-example")
+	if err != nil {
+		panic(err)
+	}
+
+	store, err := badger.NewDatastore(dir, &badger.DefaultOptions)
+	if err != nil {
+		panic(err)
+	}
+
+	defer os.RemoveAll(dir)
+	defer store.Close()
+
+	crdtDatastore, p2pNode := newCRDTDatastore(privateKey, "4000", "crdt-interop", store, ds.NewKey("/crdt-interop"))
 
 	fmt.Printf("Libp2p running on %s\n", AddressesWithPeerID(p2pNode.H))
 
@@ -163,7 +181,6 @@ func main() {
 		logger.Fatal(err)
 	}
 
-	// http interface to add/delete keys / dag export
 	sigChan := make(chan os.Signal, 1)
 
 	signal.Notify(
@@ -247,6 +264,7 @@ func handlePost(crdtDatastore *crdt.Datastore, w http.ResponseWriter, r *http.Re
 	result := &OkResponse{Success: true}
 
 	w.Header().Set("Content-Type", "application/json")
+
 	err = json.NewEncoder(w).Encode(result)
 	if err != nil {
 		logger.Error(err)
@@ -255,7 +273,8 @@ func handlePost(crdtDatastore *crdt.Datastore, w http.ResponseWriter, r *http.Re
 
 func handleGet(crdtDatastore *crdt.Datastore, w http.ResponseWriter, r *http.Request, key string) {
 	value, err := crdtDatastore.Get(r.Context(), ds.NewKey(key))
-	if err != nil {
+	_ = crdtDatastore.PrintDAG()
+	if err != nil || value == nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 
 		return
@@ -264,6 +283,7 @@ func handleGet(crdtDatastore *crdt.Datastore, w http.ResponseWriter, r *http.Req
 	result := &ValueResponse{Value: base64.StdEncoding.EncodeToString(value)}
 
 	w.Header().Set("Content-Type", "application/json")
+
 	err = json.NewEncoder(w).Encode(result)
 	if err != nil {
 		logger.Error(err)
@@ -281,9 +301,9 @@ func handleDelete(crdtDatastore *crdt.Datastore, w http.ResponseWriter, r *http.
 	result := &OkResponse{Success: true}
 
 	w.Header().Set("Content-Type", "application/json")
+
 	err := json.NewEncoder(w).Encode(result)
 	if err != nil {
 		logger.Error(err)
 	}
-
 }

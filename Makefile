@@ -9,7 +9,9 @@ build-go:
 	docker build -t go-crdt:latest -f go/Dockerfile ./go
 
 test:
-	cd test && go test -v
-
-testsingle:
-	cd test && go test -v -failfast -run ${TEST}
+	@cd test && \
+	if [ -z "${TEST}" ]; then \
+		go test -v -failfast; \
+	else \
+		go test -v -failfast -run ${TEST}; \
+	fi

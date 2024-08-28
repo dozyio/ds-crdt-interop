@@ -179,7 +179,6 @@ async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort
 
     try {
       const value = await datastore.get(new Key(key))
-      console.log('value', value)
 
       if (value === null) {
         await reply.status(404).send({ error: 'not found' })

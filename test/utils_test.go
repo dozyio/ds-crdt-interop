@@ -113,20 +113,26 @@ func startGoContainer( //nolint:ireturn // ignore
 	networkName string,
 	withLogging bool,
 ) (testcontainers.Container, error) {
+	env := map[string]string{
+		"TYPE":               "go",
+		"HTTP_PORT":          goHttpPort,
+		"HTTP_PORT_MAPPED":   goMappedHttpPort,
+		"HTTP_HOST":          "0.0.0.0",
+		"LIBP2P_HOST":        "0.0.0.0",
+		"LIBP2P_PORT":        goLibp2pPort,
+		"LIBP2P_PORT_MAPPED": goMappedLibp2pPort,
+		"PRIVATE_KEY":        goPrivateKey,
+	}
+
+	if withLogging {
+		env["GOLOG_LOG_LEVEL"] = "debug"
+	}
+
 	return startContainer(
 		ctx,
 		networkName,
 		"go-crdt:latest",
-		map[string]string{
-			"TYPE":               "go",
-			"HTTP_PORT":          goHttpPort,
-			"HTTP_PORT_MAPPED":   goMappedHttpPort,
-			"HTTP_HOST":          "0.0.0.0",
-			"LIBP2P_HOST":        "0.0.0.0",
-			"LIBP2P_PORT":        goLibp2pPort,
-			"LIBP2P_PORT_MAPPED": goMappedLibp2pPort,
-			"PRIVATE_KEY":        goPrivateKey,
-		},
+		env,
 		[]string{
 			goMappedHttpPort,
 			goMappedLibp2pPort,
@@ -372,11 +378,13 @@ func validateNoKey(t *testing.T, c testcontainers.Container, key string) bool {
 
 	resp, err := client.Do(req)
 	assert.NoError(t, err, "Failed to send HTTP request %s", err) //nolint:testifylint // runs in goroutine
-	defer resp.Body.Close()
+	defer func() {
+		if resp != nil {
+			resp.Body.Close()
+		}
+	}()
 
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode, "Unexpected status code: %d", resp.StatusCode)
-
-	return true
+	return resp.StatusCode == http.StatusNotFound
 }
 
 func validateKeyConsistency(t *testing.T, nc, gc testcontainers.Container, key string) bool {

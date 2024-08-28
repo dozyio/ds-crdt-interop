@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	ds "github.com/ipfs/go-datastore"
+	badger "github.com/ipfs/go-ds-badger"
 	crdt "github.com/ipfs/go-ds-crdt"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/stretchr/testify/assert"
@@ -17,8 +19,21 @@ import (
 
 func createTestNode() (*P2PNode, *crdt.Datastore) {
 	privateKey, _, _ := crypto.GenerateKeyPair(crypto.RSA, 2048)
-	datastore := ds.NewMapDatastore()
-	crdtDatastore, p2pNode := newCRDTDatastore(privateKey, "4000", "test-topic", datastore, ds.NewKey("/test-namespace"))
+
+	dir, err := os.MkdirTemp("", "globaldb-example")
+	if err != nil {
+		panic(err)
+	}
+
+	store, err := badger.NewDatastore(dir, &badger.DefaultOptions)
+	if err != nil {
+		panic(err)
+	}
+
+	defer os.RemoveAll(dir)
+
+	// datastore := ds.NewMapDatastore()
+	crdtDatastore, p2pNode := newCRDTDatastore(privateKey, "4000", "test-topic", store, ds.NewKey("/test-namespace"))
 
 	return p2pNode, crdtDatastore
 }
