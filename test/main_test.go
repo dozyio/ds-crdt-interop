@@ -271,3 +271,62 @@ func TestGoNetworkPartition(t *testing.T) {
 		assert.True(c, validateKeyConsistency(t, nc, gc, key))
 	}, 10*time.Second, 100*time.Millisecond, "Keys did not converge")
 }
+
+// Test for randomized operations on multiple keys to stress test the CRDT implementation
+func TestRandomizedStressTest(t *testing.T) {
+	t.Parallel()
+	nc, gc := setupTestEnvironment(t, true)
+
+	numKeys := 1000
+	numOperations := 10000
+	keys := make([]string, numKeys)
+
+	for i := 0; i < numKeys; i++ {
+		keys[i] = "key" + strconv.Itoa(i)
+	}
+
+	var wg sync.WaitGroup
+
+	wg.Add(2)
+
+	// Perform random operations in Go
+	go func() {
+		defer wg.Done()
+
+		for i := 0; i < numOperations; i++ {
+			key := keys[i%numKeys]
+			value := "valueGo" + strconv.Itoa(i)
+
+			putKey(t, gc, key, value)
+
+			if i%100 == 0 {
+				deleteKey(t, gc, key)
+			}
+		}
+	}()
+
+	// Perform random operations in Node
+	go func() {
+		defer wg.Done()
+
+		for i := 0; i < numOperations; i++ {
+			key := keys[i%numKeys]
+			value := "valueNode" + strconv.Itoa(i)
+
+			putKey(t, nc, key, value)
+
+			if i%100 == 0 {
+				deleteKey(t, nc, key)
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	// Validate that all keys converge to a consistent state
+	for _, key := range keys {
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			assert.True(c, validateKeyConsistency(t, nc, gc, key), "Key %s did not converge after test", key)
+		}, 180*time.Second, 100*time.Millisecond, "Key %s did not converge after test", key)
+	}
+}

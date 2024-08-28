@@ -66,8 +66,8 @@ func newCRDTDatastore(
 	datastore ds.Batching,
 	namespace ds.Key,
 ) (*crdt.Datastore, *P2PNode) {
-	_ = logging.SetLogLevel("*", "debug")
-	_ = logging.SetLogLevel("p2p-config", "info")
+	// _ = logging.SetLogLevel("*", "debug")
+	// _ = logging.SetLogLevel("p2p-config", "info")
 	n := createNode(privateKey, port, topic, datastore)
 
 	opts := crdt.DefaultOptions()
@@ -273,7 +273,6 @@ func handlePost(crdtDatastore *crdt.Datastore, w http.ResponseWriter, r *http.Re
 
 func handleGet(crdtDatastore *crdt.Datastore, w http.ResponseWriter, r *http.Request, key string) {
 	value, err := crdtDatastore.Get(r.Context(), ds.NewKey(key))
-	_ = crdtDatastore.PrintDAG()
 	if err != nil || value == nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -32,6 +33,10 @@ const (
 	goMappedLibp2pPort   = "4000/tcp"
 	goPrivateKey         = "08011240be5d8bf7971c9a5b01892cf7ff5603f735a92a94623903787c15e994584eab9ce46ad62ac53a9db270ffbe03073be479f6ffc123270fc54c712a98022c8050bc" //nolint:lll // ignore
 	goPeerId             = "12D3KooWRC1cNip3xyDwzxrCryQ3V7bCsVF6Q3Nvh4o2CBSFpEmR"
+)
+
+var (
+	errStatusNotFound = errors.New("status code 404")
 )
 
 type StdoutLogConsumer struct{}
@@ -90,9 +95,9 @@ func startNodeContainer( //nolint:ireturn // ignore
 		"LIBP2P_PORT_MAPPED": nodeMappedLibp2pPort,
 	}
 
-	if withLogging {
-		env["DEBUG"] = "*"
-	}
+	// if withLogging {
+	// 	env["DEBUG"] = "crdt:pubsub*"
+	// }
 
 	return startContainer(
 		ctx,
@@ -125,7 +130,7 @@ func startGoContainer( //nolint:ireturn // ignore
 	}
 
 	if withLogging {
-		env["GOLOG_LOG_LEVEL"] = "debug"
+		env["GOLOG_LOG_LEVEL"] = "ERROR"
 	}
 
 	return startContainer(
@@ -230,45 +235,51 @@ func deleteKey(t *testing.T, c testcontainers.Container, key string) {
 }
 
 // Helper function to retrieve the value from a datastore
-func getKey(url string) (string, error) {
+func getKey(url string) (*string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
 	if err != nil {
-		return "", fmt.Errorf("failed to create HTTP request: %w", err)
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
 
 	client := &http.Client{}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to send HTTP request: %w", err)
+		return nil, fmt.Errorf("failed to send HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, errStatusNotFound
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read HTTP response body: %w", err)
+		return nil, fmt.Errorf("failed to read HTTP response body: %w", err)
 	}
 
 	var valueResp valueResponse
 
 	err = json.Unmarshal(body, &valueResp)
 	if err != nil {
-		return "", fmt.Errorf("failed to unmarshal JSON response: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal JSON response: %w", err)
 	}
 
 	decodedValue, err := base64.StdEncoding.DecodeString(valueResp.Value)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode base64 value: %w", err)
+		return nil, fmt.Errorf("failed to decode base64 value: %w", err)
 	}
 
-	return string(decodedValue), nil
+	v := string(decodedValue)
+
+	return &v, nil
 }
 
 func baseUrl(c testcontainers.Container) string {
@@ -378,6 +389,7 @@ func validateNoKey(t *testing.T, c testcontainers.Container, key string) bool {
 
 	resp, err := client.Do(req)
 	assert.NoError(t, err, "Failed to send HTTP request %s", err) //nolint:testifylint // runs in goroutine
+
 	defer func() {
 		if resp != nil {
 			resp.Body.Close()
@@ -388,24 +400,48 @@ func validateNoKey(t *testing.T, c testcontainers.Container, key string) bool {
 }
 
 func validateKeyConsistency(t *testing.T, nc, gc testcontainers.Container, key string) bool {
-	t.Helper() // Marks this function as a helper, so the line number in the test output is correct
+	t.Helper()
 
 	nodeURL := baseUrl(nc) + key
 	goURL := baseUrl(gc) + key
 
 	nodeValue, err := getKey(nodeURL)
 	if err != nil {
-		return false
+		if !errors.Is(err, errStatusNotFound) {
+			return false
+		}
+	}
+
+	if nodeValue != nil {
+		fmt.Printf("Node value: %s %s\n", key, *nodeValue)
+	} else {
+		fmt.Printf("Node value: %s nil\n", key)
 	}
 
 	// Get the value from the Go datastore
 
 	goValue, err := getKey(goURL)
 	if err != nil {
+		if !errors.Is(err, errStatusNotFound) {
+			return false
+		}
+	}
+
+	if goValue != nil {
+		fmt.Printf("Go value: %s %s\n", key, *goValue)
+	} else {
+		fmt.Printf("Go value: %s nil\n", key)
+	}
+
+	if nodeValue == nil && goValue == nil {
+		return true
+	}
+
+	if (nodeValue == nil && goValue != nil) || (nodeValue != nil && goValue == nil) {
 		return false
 	}
 
-	if nodeValue != goValue {
+	if *nodeValue != *goValue {
 		return false
 	}
 
