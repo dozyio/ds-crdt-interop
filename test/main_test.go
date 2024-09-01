@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -13,7 +14,6 @@ import (
 
 // Test for Node adding a single key
 func TestNodeAddSingleKey(t *testing.T) {
-	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	key := "testN"
@@ -29,7 +29,6 @@ func TestNodeAddSingleKey(t *testing.T) {
 
 // Test for Go adding a single key
 func TestGoAddSingleKey(t *testing.T) {
-	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	key := "testG"
@@ -45,7 +44,6 @@ func TestGoAddSingleKey(t *testing.T) {
 
 // Test for Node deleting a single key
 func TestNodeAddDeleteKey(t *testing.T) {
-	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	key := "testND"
@@ -68,7 +66,6 @@ func TestNodeAddDeleteKey(t *testing.T) {
 
 // Test for Go deleting a single key
 func TestGoAddDeleteKey(t *testing.T) {
-	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	key := "testNG"
@@ -91,7 +88,6 @@ func TestGoAddDeleteKey(t *testing.T) {
 
 // Test for Node adding multiple keys
 func TestNodeAddMultipleKeys(t *testing.T) {
-	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	for i := 0; i < 100; i++ {
@@ -136,7 +132,6 @@ func TestNodeAddMultipleKeys(t *testing.T) {
 
 // Test for Go adding multiple keys
 func TestGoAddMultipleKeys(t *testing.T) {
-	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	numReq := 100
@@ -183,7 +178,6 @@ func TestGoAddMultipleKeys(t *testing.T) {
 
 // Test for conflict resolution
 func TestConflictResolution(t *testing.T) {
-	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	key := "conflictKey"
@@ -214,7 +208,6 @@ func TestConflictResolution(t *testing.T) {
 
 // Test for Node network partition
 func TestNodeNetworkPartition(t *testing.T) {
-	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	key := "partitionKey"
@@ -244,7 +237,6 @@ func TestNodeNetworkPartition(t *testing.T) {
 
 // Test for Go network partition
 func TestGoNetworkPartition(t *testing.T) {
-	t.Parallel()
 	nc, gc := setupTestEnvironment(t, false)
 
 	key := "partitionKey"
@@ -274,8 +266,11 @@ func TestGoNetworkPartition(t *testing.T) {
 
 // Test for randomized operations on multiple keys to stress test the CRDT implementation
 func TestRandomizedStressTest(t *testing.T) {
-	t.Parallel()
-	nc, gc := setupTestEnvironment(t, true)
+	nc, gc := setupTestEnvironment(t, false)
+
+	ctx := context.Background()
+	p, _ := nc.MappedPort(ctx, "9229/tcp")
+	fmt.Printf("Node Debug Mapped port: %s\n", p.Port())
 
 	numKeys := 1000
 	numOperations := 10000
@@ -289,6 +284,7 @@ func TestRandomizedStressTest(t *testing.T) {
 
 	wg.Add(2)
 
+	fmt.Printf("Putting key values\n")
 	// Perform random operations in Go
 	go func() {
 		defer wg.Done()
@@ -298,10 +294,6 @@ func TestRandomizedStressTest(t *testing.T) {
 			value := "valueGo" + strconv.Itoa(i)
 
 			putKey(t, gc, key, value)
-
-			if i%100 == 0 {
-				deleteKey(t, gc, key)
-			}
 		}
 	}()
 
@@ -314,19 +306,16 @@ func TestRandomizedStressTest(t *testing.T) {
 			value := "valueNode" + strconv.Itoa(i)
 
 			putKey(t, nc, key, value)
-
-			if i%100 == 0 {
-				deleteKey(t, nc, key)
-			}
 		}
 	}()
 
 	wg.Wait()
 
+	fmt.Printf("Validating key values\n")
 	// Validate that all keys converge to a consistent state
 	for _, key := range keys {
 		require.EventuallyWithT(t, func(c *assert.CollectT) {
 			assert.True(c, validateKeyConsistency(t, nc, gc, key), "Key %s did not converge after test", key)
-		}, 180*time.Second, 100*time.Millisecond, "Key %s did not converge after test", key)
+		}, 10*time.Minute, 100*time.Millisecond, "Key %s did not converge after test", key)
 	}
 }

@@ -14,7 +14,6 @@ import (
 
 	ipfslite "github.com/hsanjuan/ipfs-lite"
 	ds "github.com/ipfs/go-datastore"
-	badger "github.com/ipfs/go-ds-badger"
 	crdt "github.com/ipfs/go-ds-crdt"
 	logging "github.com/ipfs/go-log/v2"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
@@ -155,19 +154,20 @@ func main() {
 		panic(err)
 	}
 
-	// store := dssync.MutexWrap(ds.NewMapDatastore())
+	store := ipfslite.NewInMemoryDatastore()
 
-	dir, err := os.MkdirTemp("", "globaldb-example")
-	if err != nil {
-		panic(err)
-	}
+	// dir, err := os.MkdirTemp("", "globaldb-example")
+	// if err != nil {
+	// 	panic(err)
+	// }
+	//
+	// store, err := badger.NewDatastore(dir, &badger.DefaultOptions)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	//
+	// defer os.RemoveAll(dir)
 
-	store, err := badger.NewDatastore(dir, &badger.DefaultOptions)
-	if err != nil {
-		panic(err)
-	}
-
-	defer os.RemoveAll(dir)
 	defer store.Close()
 
 	crdtDatastore, p2pNode := newCRDTDatastore(privateKey, "4000", "crdt-interop", store, ds.NewKey("/crdt-interop"))
@@ -200,6 +200,20 @@ func setupRouter(crdtDatastore *crdt.Datastore, p2pNode *P2PNode) *http.ServeMux
 
 	router.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "OK")
+	})
+
+	router.HandleFunc("GET /stats", func(w http.ResponseWriter, r *http.Request) {
+		stats := crdtDatastore.InternalStats()
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := json.NewEncoder(w).Encode(stats); err != nil {
+			http.Error(w, "Failed to encode JSON", http.StatusInternalServerError)
+		}
+	})
+
+	router.HandleFunc("GET /dotdag", func(w http.ResponseWriter, r *http.Request) {
+		handleDotDag(crdtDatastore, w, r)
 	})
 
 	router.HandleFunc("GET /subscribers", func(w http.ResponseWriter, r *http.Request) {
@@ -305,4 +319,9 @@ func handleDelete(crdtDatastore *crdt.Datastore, w http.ResponseWriter, r *http.
 	if err != nil {
 		logger.Error(err)
 	}
+}
+
+func handleDotDag(crdtDatastore *crdt.Datastore, w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "plain/text")
+	crdtDatastore.DotDAG(w)
 }

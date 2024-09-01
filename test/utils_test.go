@@ -25,6 +25,7 @@ import (
 const (
 	nodeHttpPort         = "3000"
 	nodeMappedHttpPort   = "3000/tcp"
+	nodeInspectPort      = "9229/tcp"
 	nodeLibp2pPort       = "6000"
 	nodeMappedLibp2pPort = "6000/tcp"
 	goHttpPort           = "8000"
@@ -64,7 +65,7 @@ func setupTestEnvironment( //nolint:ireturn // ignore
 
 	networkName := newNetwork.Name
 
-	// Start the node ontainer
+	// Start the node container
 	nodeContainer, err = startNodeContainer(ctx, networkName, withLogging)
 	require.NoError(t, err)
 	t.Cleanup(func() { nodeContainer.Terminate(ctx) })
@@ -95,9 +96,9 @@ func startNodeContainer( //nolint:ireturn // ignore
 		"LIBP2P_PORT_MAPPED": nodeMappedLibp2pPort,
 	}
 
-	// if withLogging {
-	// 	env["DEBUG"] = "crdt:pubsub*"
-	// }
+	if withLogging {
+		env["DEBUG"] = "crdt:*"
+	}
 
 	return startContainer(
 		ctx,
@@ -107,6 +108,7 @@ func startNodeContainer( //nolint:ireturn // ignore
 		[]string{
 			nodeMappedHttpPort,
 			nodeMappedLibp2pPort,
+			nodeInspectPort,
 		},
 		nodeHttpPort,
 		withLogging,
@@ -412,11 +414,11 @@ func validateKeyConsistency(t *testing.T, nc, gc testcontainers.Container, key s
 		}
 	}
 
-	if nodeValue != nil {
-		fmt.Printf("Node value: %s %s\n", key, *nodeValue)
-	} else {
-		fmt.Printf("Node value: %s nil\n", key)
-	}
+	// if nodeValue != nil {
+	// 	fmt.Printf("Node value: %s %s\n", key, *nodeValue)
+	// } else {
+	// 	fmt.Printf("Node value: %s nil\n", key)
+	// }
 
 	// Get the value from the Go datastore
 
@@ -427,25 +429,55 @@ func validateKeyConsistency(t *testing.T, nc, gc testcontainers.Container, key s
 		}
 	}
 
-	if goValue != nil {
-		fmt.Printf("Go value: %s %s\n", key, *goValue)
-	} else {
-		fmt.Printf("Go value: %s nil\n", key)
-	}
+	// if goValue != nil {
+	// 	fmt.Printf("Go value: %s %s\n", key, *goValue)
+	// } else {
+	// 	fmt.Printf("Go value: %s nil\n", key)
+	// }
 
 	if nodeValue == nil && goValue == nil {
 		return true
 	}
 
 	if (nodeValue == nil && goValue != nil) || (nodeValue != nil && goValue == nil) {
+		// printStats(t, nc)
+		// printStats(t, gc)
+
 		return false
 	}
 
 	if *nodeValue != *goValue {
+		// printStats(t, nc)
+		// printStats(t, gc)
+
 		return false
 	}
 
 	return true
+}
+
+func printStats(t *testing.T, c testcontainers.Container) {
+	t.Helper()
+
+	cInfo, err := c.Inspect(context.Background())
+	if err != nil {
+		panic(err)
+	}
+
+	cType := ""
+
+	for _, item := range cInfo.Config.Env {
+		if strings.HasPrefix(item, "TYPE=") {
+			cType = strings.TrimPrefix(item, "TYPE=")
+		}
+	}
+
+	stats, err := getStats(t, baseUrl(c)+"stats")
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("%s stats: %s\n", cType, *stats)
 }
 
 func hasSubscribers(t *testing.T, url string) bool {
@@ -500,4 +532,42 @@ func getSubscribers(t *testing.T, url string) ([]string, error) {
 
 	// Return the list of peer IDs
 	return peerIDs, nil
+}
+
+func getStats(t *testing.T, url string) (*string, error) {
+	t.Helper()
+
+	// Create a context with a timeout to avoid hanging requests
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Create a new HTTP request with the given URL
+	req, err := http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP request: %s %w", url, err)
+	}
+
+	// Initialize the HTTP client
+	client := &http.Client{}
+
+	// Send the HTTP request
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send HTTP request: %s %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	// Check if the response status code is 200 OK
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %s %d", url, resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read HTTP response body: %s %w", url, err)
+	}
+
+	stats := string(body)
+
+	return &stats, nil
 }

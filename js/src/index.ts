@@ -8,7 +8,9 @@ import { peerIdFromKeys } from '@libp2p/peer-id'
 import { tcp } from '@libp2p/tcp'
 import { multiaddr } from '@multiformats/multiaddr'
 import { MemoryBlockstore } from 'blockstore-core'
+import { FsBlockstore } from 'blockstore-fs'
 import { MemoryDatastore } from 'datastore-core'
+import { LevelDatastore } from 'datastore-level'
 import Fastify from 'fastify'
 import { createHelia, type HeliaLibp2p } from 'helia'
 import { type Blockstore } from 'interface-blockstore'
@@ -174,6 +176,16 @@ async function startServer (datastore: CRDTDatastore, httpHost: string, httpPort
     return JSON.stringify(datastore.dagService.libp2p.services.pubsub.getSubscribers(topic))
   })
 
+  fastify.get('/stats', async (request, reply) => {
+    const stats = await datastore.internalStats()
+    const stats2 = {
+      heads: stats.heads,
+      maxHeight: stats.maxHeight.toString(),
+      queuedJobs: stats.queuedJobs
+    }
+    return JSON.stringify(stats2)
+  })
+
   fastify.get('/*', async (request, reply) => {
     const { '*': key } = request.params as { '*': string }
 
@@ -298,6 +310,16 @@ export default async function newTestServer (): Promise<void> {
   const datastore = new MemoryDatastore()
   const blockstore = new MemoryBlockstore()
 
+  // const blockstore = new IDBBlockstore('crdt/bs')
+  // await blockstore.open()
+
+  // const blockstore = new FsBlockstore('/tmp/blockstore')
+  // await blockstore.open()
+  //
+  // // const datastore = new IDBDatastore('crdt/ds')
+  // const datastore = new LevelDatastore('/tmp/datastore')
+  // await datastore.open()
+
   const opts: Partial<Options> = {
     putHook: (key: string, value: Uint8Array) => {
       // eslint-disable-next-line no-console
@@ -307,7 +329,8 @@ export default async function newTestServer (): Promise<void> {
       // eslint-disable-next-line no-console
       console.log(`JS Removed: [${new Key(key).toString()}]`)
     },
-    loggerPrefix: 'crdt'
+    loggerPrefix: 'crdt',
+    bloomFilter: null
   }
   const crdtDatastore = await newCRDTDatastore(peerId, libp2pPort, gossipSubTopic, datastore, blockstore, opts)
 
